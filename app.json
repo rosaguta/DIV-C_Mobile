@@ -15,7 +15,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.digitalrose.DIVC_Mobile"
     },
     "web": {
       "bundler": "metro",
@@ -23,6 +24,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "@config-plugins/react-native-webrtc",
       "expo-router",
       [
         "expo-splash-screen",
