@@ -1,14 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Text, View, StyleSheet, TouchableOpacity, TextInput, ScrollView, SafeAreaView, Dimensions } from 'react-native';
 import { io } from 'socket.io-client';
-// import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView } from 'react-native-webrtc';
-
+import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals} from 'react-native-webrtc';
+registerGlobals()
 const ICE_SERVERS = {
   iceServers: [
-    {
-      urls: 'stun:stun.voipplanet.nl:3478',
-    }
+    { urls: 'stun:stun.solcon.nl:3478' }
+   
   ],
+  iceCandidatePoolSize: 10,
 };
 const { width } = Dimensions.get('window');
 
@@ -32,7 +32,7 @@ export default function RoomScreen() {
     if (!roomName) return;
 
     // Connect directly to your Express server
-    socketRef.current = io('http://192.168.2.161:4000', {
+    socketRef.current = io('http://192.168.123.59:4000', {
       transports: ['websocket'],
       forceNew: true
     });
@@ -86,6 +86,14 @@ export default function RoomScreen() {
     };
   }, [roomName]);
 
+  // useEffect(() => {
+  //   if (peerStreamRef.current) {
+  //     console.log('Peer stream changed, forcing re-render');
+  //     setIsConnected(prev => !prev);
+  //   }
+  // }, [peerStreamRef.current]);
+  
+
   const handleRoomJoined = () => {
     console.log('Room joined, requesting media access...');
     requestMediaAccess();
@@ -100,16 +108,16 @@ export default function RoomScreen() {
   const requestMediaAccess = async () => {
     try {
       // For React Native WebRTC, we use mediaDevices.getUserMedia
-      // const stream = await MediaDevices.getUserMedia({
-      //   audio: true,
-      //   video: {
-      //     width: 500,
-      //     height: 500,
-      //   },
-      // });
+      const stream = await mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          width: 500,
+          height: 500,
+        },
+      });
 
       console.log('Media access granted, setting up local video');
-      // userStreamRef.current = stream;
+      userStreamRef.current = stream;
 
       // If we joined (not created) the room, emit ready event
       if (!hostRef.current) {
@@ -142,7 +150,6 @@ export default function RoomScreen() {
         userStreamRef.current.getTracks().forEach(track => {
           rtcConnectionRef.current?.addTrack(track, userStreamRef.current!);
         });
-
         rtcConnectionRef.current
           .createOffer()
           .then((offer) => {
@@ -162,7 +169,7 @@ export default function RoomScreen() {
     console.log('Peer left the room');
     // This person is now the creator because they are the only person in the room.
     hostRef.current = true;
-    
+
     if (peerStreamRef.current) {
       peerStreamRef.current.getTracks().forEach((track) => track.stop());
       peerStreamRef.current = null;
@@ -179,14 +186,20 @@ export default function RoomScreen() {
 
   const createPeerConnection = () => {
     console.log('Creating peer connection');
-    // We create a RTC Peer Connection
     const connection = new RTCPeerConnection(ICE_SERVERS);
 
-    // We implement our onicecandidate method for when we received a ICE candidate from the STUN server
     connection.onicecandidate = handleICECandidateEvent;
-
-    // We implement our onTrack method for when we receive tracks
     connection.ontrack = handleTrackEvent;
+
+    // Add these connection state monitors
+    connection.oniceconnectionstatechange = () => {
+      console.log('ICE Connection State:', connection.iceConnectionState);
+    };
+
+    connection.onconnectionstatechange = () => {
+      console.log('Connection State:', connection.connectionState);
+    };
+
     return connection;
   };
 
@@ -237,14 +250,37 @@ export default function RoomScreen() {
   };
 
   const handleTrackEvent = (event: RTCTrackEvent) => {
-    console.log('Received tracks from peer');
-    // Set the remote stream reference
-    peerStreamRef.current = event.streams[0];
+    console.log('Received tracks from peer', event.streams);
+    console.log('Track details:', {
+      kind: event.track.kind,
+      enabled: event.track.enabled,
+      readyState: event.track.readyState,
+      id: event.track.id
+    });
+    
+    if (event.streams && event.streams[0]) {
+      console.log('Setting peer stream with track type:', event.track.kind);
+      
+      // Force a short delay before setting the stream (helps with rendering issues)
+      setTimeout(() => {
+        peerStreamRef.current = event.streams[0];
+        // Force re-render
+        setIsConnected(prev => !prev);
+      }, 500);
+    } else {
+      console.error('Received track event with no streams');
+    }
   };
-
-  const toggleMediaStream = (type: string, state: boolean) => {
+  const toggleMediaStream = (type: any, state: any) => {
     if (userStreamRef.current) {
       userStreamRef.current.getTracks().forEach((track) => {
+        if (track.kind === type) {
+          track.enabled = !state;
+        }
+      });
+    }
+    if (peerStreamRef.current) {
+      peerStreamRef.current.getTracks().forEach((track) => {
         if (track.kind === type) {
           track.enabled = !state;
         }
@@ -291,39 +327,53 @@ export default function RoomScreen() {
       {/* Video Container */}
       <View style={styles.videoContainer}>
         <View style={styles.videoBox}>
-          {/* {userStreamRef.current && (
-            <RTCView 
-              streamURL={userStreamRef.current.toURL()} 
-              style={styles.video} 
-              objectFit="cover" 
-              mirror={true} 
+          {userStreamRef.current && (
+            <RTCView
+              streamURL={userStreamRef.current.toURL()}
+              style={styles.video}
+              objectFit="cover"
+              mirror={true}
             />
-          )} */}
+          )}
           <View style={styles.videoLabel}>
             <Text style={styles.videoLabelText}>You</Text>
           </View>
         </View>
         <View style={styles.videoBox}>
-          {/* {peerStreamRef.current && (
-            <RTCView 
-              streamURL={peerStreamRef.current.toURL()} 
-              style={styles.video} 
-              objectFit="cover" 
-            />
-          )} */}
+          {peerStreamRef.current ? (
+            <>
+              <RTCView
+                streamURL={peerStreamRef.current.toURL()}
+                style={styles.video}
+                objectFit="cover"
+                zOrder={1} // Try different zOrder values (0 or 1)
+              />
+              <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', padding: 3 }}>
+                <Text style={{ color: 'white', fontSize: 10 }}>
+                  Tracks: {peerStreamRef.current.getTracks().length} |
+                  A: {peerStreamRef.current.getAudioTracks().length} |
+                  V: {peerStreamRef.current.getVideoTracks().length}
+                </Text>
+              </View>
+            </>
+          ) : (
+            <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
+              <Text style={{ color: 'white' }}>Waiting for peer video...</Text>
+            </View>
+          )}
           <View style={styles.videoLabel}>
             <Text style={styles.videoLabelText}>Peer</Text>
           </View>
         </View>
       </View>
-      
+
       {/* Chat Section */}
       <View style={styles.chatSection}>
         <Text style={styles.sectionHeader}>Chat</Text>
-        
+
         {/* Chat Messages */}
         <View style={styles.chatContainer}>
-          <ScrollView 
+          <ScrollView
             ref={chatScrollViewRef}
             style={styles.chatScrollView}
             contentContainerStyle={styles.chatContent}
@@ -339,18 +389,18 @@ export default function RoomScreen() {
             )}
           </ScrollView>
         </View>
-        
+
         {/* Chat Input */}
         <View style={styles.inputContainer}>
-          <TextInput 
+          <TextInput
             style={styles.input}
             value={input}
             onChangeText={handleInputChange}
             placeholder="Type your message"
             placeholderTextColor="#999"
           />
-          <TouchableOpacity 
-            style={styles.sendButton} 
+          <TouchableOpacity
+            style={styles.sendButton}
             onPress={sendChat}
             disabled={!input.trim()}
           >
@@ -358,17 +408,17 @@ export default function RoomScreen() {
           </TouchableOpacity>
         </View>
       </View>
-      
+
       {/* Controls */}
       <View style={styles.controls}>
         <TouchableOpacity onPress={toggleMic} style={[styles.controlBtn, micActive ? {} : styles.inactiveBtn]}>
           <Text style={styles.buttonText}>{micActive ? 'Mute Mic' : 'Unmute Mic'}</Text>
         </TouchableOpacity>
-        
+
         <TouchableOpacity onPress={leaveRoom} style={[styles.controlBtn, styles.leaveBtn]}>
           <Text style={styles.buttonText}>Leave Room</Text>
         </TouchableOpacity>
-        
+
         <TouchableOpacity onPress={toggleCamera} style={[styles.controlBtn, cameraActive ? {} : styles.inactiveBtn]}>
           <Text style={styles.buttonText}>{cameraActive ? 'Stop Camera' : 'Start Camera'}</Text>
         </TouchableOpacity>
