@@ -1,21 +1,31 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Text, View, StyleSheet, TouchableOpacity, TextInput, ScrollView, SafeAreaView, Dimensions } from 'react-native';
 import { io } from 'socket.io-client';
-import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals} from 'react-native-webrtc';
+import { useRouter } from 'expo-router';
+import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals } from 'react-native-webrtc';
+import { MessageCircle, Mic, MicOff, Camera, CameraOff, Phone } from 'lucide-react-native';
 registerGlobals()
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.solcon.nl:3478' }
-   
+
   ],
   iceCandidatePoolSize: 10,
 };
 const { width } = Dimensions.get('window');
 
+type Participant = {
+  id: String, 
+  name: String, 
+  stream: MediaStream, 
+  isMuted: Boolean, 
+  isVideoOff: Boolean 
+}
+
+
 export default function RoomScreen() {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [chat, setChat] = useState<string[]>([]);
-  const [transport, setTransport] = useState<string>("N/A");
   const [roomName, setRoomName] = useState<string>("phone");
   const socketRef = useRef<any>(null);
   const [micActive, setMicActive] = useState<boolean>(true);
@@ -26,13 +36,17 @@ export default function RoomScreen() {
   const rtcConnectionRef = useRef<RTCPeerConnection | null>(null);
   const hostRef = useRef<boolean>(false);
   const chatScrollViewRef = useRef<ScrollView>(null);
+  const router = useRouter()
+  const [showDeviceSettings, setShowDeviceSettings] = useState<boolean>(false)
+  const participantsRef = useRef<Participant[]>([])
+  
 
   useEffect(() => {
     // Only initialize socket and join room if roomName exists
     if (!roomName) return;
 
     // Connect directly to your Express server
-    socketRef.current = io('http://192.168.123.59:4000', {
+    socketRef.current = io('http://192.168.2.191:4000', {
       transports: ['websocket'],
       forceNew: true
     });
@@ -83,16 +97,24 @@ export default function RoomScreen() {
       if (userStreamRef.current) {
         userStreamRef.current.getTracks().forEach(track => track.stop());
       }
+      socketRef.current.off('connect');
+      socketRef.current.off('joined');
+      socketRef.current.off('created');
+      socketRef.current.off('ready');
+      socketRef.current.off('message');
     };
-  }, [roomName]);
 
-  // useEffect(() => {
-  //   if (peerStreamRef.current) {
-  //     console.log('Peer stream changed, forcing re-render');
-  //     setIsConnected(prev => !prev);
-  //   }
-  // }, [peerStreamRef.current]);
-  
+  }, [isConnected]);
+
+
+
+  useEffect(() => {
+    if (peerStreamRef.current) {
+      console.log('Peer stream changed, forcing re-render');
+      setIsConnected(prev => !prev);
+    }
+  }, [peerStreamRef.current]);
+
 
   const handleRoomJoined = () => {
     console.log('Room joined, requesting media access...');
@@ -118,7 +140,9 @@ export default function RoomScreen() {
 
       console.log('Media access granted, setting up local video');
       userStreamRef.current = stream;
+      const participant: Participant = {id:"1",name:"Rose",stream:stream,isMuted:false,isVideoOff:false}
 
+      participantsRef.current.push(participant)
       // If we joined (not created) the room, emit ready event
       if (!hostRef.current) {
         socketRef.current.emit('ready', roomName);
@@ -146,8 +170,8 @@ export default function RoomScreen() {
       rtcConnectionRef.current = createPeerConnection();
 
       // Only add tracks if we have a stream
-      if (userStreamRef.current) {
-        userStreamRef.current.getTracks().forEach(track => {
+      if (participantsRef.current[0].stream) {
+        participants[0].stream.getTracks().forEach(track => {
           rtcConnectionRef.current?.addTrack(track, userStreamRef.current!);
         });
         rtcConnectionRef.current
@@ -257,10 +281,10 @@ export default function RoomScreen() {
       readyState: event.track.readyState,
       id: event.track.id
     });
-    
+
     if (event.streams && event.streams[0]) {
       console.log('Setting peer stream with track type:', event.track.kind);
-      
+
       // Force a short delay before setting the stream (helps with rendering issues)
       setTimeout(() => {
         peerStreamRef.current = event.streams[0];
@@ -279,13 +303,13 @@ export default function RoomScreen() {
         }
       });
     }
-    if (peerStreamRef.current) {
-      peerStreamRef.current.getTracks().forEach((track) => {
-        if (track.kind === type) {
-          track.enabled = !state;
-        }
-      });
-    }
+    // if (peerStreamRef.current) {
+    //   peerStreamRef.current.getTracks().forEach((track) => {
+    //     if (track.kind === type) {
+    //       track.enabled = !state;
+    //     }
+    //   });
+    // }
   };
 
   const toggleMic = () => {
@@ -320,107 +344,91 @@ export default function RoomScreen() {
       rtcConnectionRef.current.close();
       rtcConnectionRef.current = null;
     }
+    router.push("/")
+  };
+
+
+
+  const renderParticipantCard = (participant:MediaStream) => {
+    return (
+      <View key={participant.id} style={styles.participantCard}>
+        <View style={styles.participantVideoContainer}>
+          {participant.stream && participant.stream !== null && !participant.isVideoOff ? (
+            <RTCView
+              streamURL={participant.stream.toURL()}
+              style={styles.participantVideo}
+              objectFit="cover"
+              mirror={participant.id === 'local'}
+            />
+          ) : (
+            <View style={styles.noVideoPlaceholder}>
+              <Text style={styles.placeholderText}>{participant.name[0]}</Text>
+            </View>
+          )}
+          
+          {/* Mute/Video Status Indicators */}
+          <View style={styles.statusIcons}>
+            {participant.isMuted && (
+              <Mic color="white" size={16} style={styles.muteIcon} />
+            )}
+            {participant.isVideoOff && (
+              <CameraOff color="white" size={16} style={styles.videoOffIcon} />
+            )}
+          </View>
+        </View>
+        <Text style={styles.participantName}>{participant.name}</Text>
+      </View>
+    );
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Video Container */}
-      <View style={styles.videoContainer}>
-        <View style={styles.videoBox}>
-          {userStreamRef.current && (
-            <RTCView
-              streamURL={userStreamRef.current.toURL()}
-              style={styles.video}
-              objectFit="cover"
-              mirror={true}
-            />
-          )}
-          <View style={styles.videoLabel}>
-            <Text style={styles.videoLabelText}>You</Text>
-          </View>
-        </View>
-        <View style={styles.videoBox}>
-          {peerStreamRef.current ? (
-            <>
-              <RTCView
-                streamURL={peerStreamRef.current.toURL()}
-                style={styles.video}
-                objectFit="cover"
-                zOrder={1} // Try different zOrder values (0 or 1)
-              />
-              <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', padding: 3 }}>
-                <Text style={{ color: 'white', fontSize: 10 }}>
-                  Tracks: {peerStreamRef.current.getTracks().length} |
-                  A: {peerStreamRef.current.getAudioTracks().length} |
-                  V: {peerStreamRef.current.getVideoTracks().length}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
-              <Text style={{ color: 'white' }}>Waiting for peer video...</Text>
-            </View>
-          )}
-          <View style={styles.videoLabel}>
-            <Text style={styles.videoLabelText}>Peer</Text>
-          </View>
-        </View>
+      {/* Voice Call Header */}
+      <View style={styles.header}>
+        <Text style={styles.channelName}>Voice Channel</Text>
+        <Text style={styles.connectedStatus}>Connected</Text>
       </View>
 
-      {/* Chat Section */}
-      <View style={styles.chatSection}>
-        <Text style={styles.sectionHeader}>Chat</Text>
-
-        {/* Chat Messages */}
-        <View style={styles.chatContainer}>
-          <ScrollView
-            ref={chatScrollViewRef}
-            style={styles.chatScrollView}
-            contentContainerStyle={styles.chatContent}
-          >
-            {chat.length === 0 ? (
-              <Text style={styles.noMessagesText}>No messages yet</Text>
-            ) : (
-              chat.map((msg, index) => (
-                <View key={index} style={styles.chatMessageContainer}>
-                  <Text style={styles.chatMessage}>{msg}</Text>
-                </View>
-              ))
-            )}
-          </ScrollView>
-        </View>
-
-        {/* Chat Input */}
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={handleInputChange}
-            placeholder="Type your message"
-            placeholderTextColor="#999"
-          />
-          <TouchableOpacity
-            style={styles.sendButton}
-            onPress={sendChat}
-            disabled={!input.trim()}
-          >
-            <Text style={styles.buttonText}>Send</Text>
-          </TouchableOpacity>
-        </View>
+      {/* Participants Grid */}
+      <View style={styles.participantsGrid}>
+        {participants.map(renderParticipantCard)}
       </View>
 
-      {/* Controls */}
-      <View style={styles.controls}>
-        <TouchableOpacity onPress={toggleMic} style={[styles.controlBtn, micActive ? {} : styles.inactiveBtn]}>
-          <Text style={styles.buttonText}>{micActive ? 'Mute Mic' : 'Unmute Mic'}</Text>
+      {/* Chat Icon */}
+      <TouchableOpacity 
+        style={styles.chatButton} 
+        onPress={() => {/* Toggle chat view */}}
+      >
+        <MessageCircle color="white" size={24} />
+      </TouchableOpacity>
+
+      {/* Call Controls */}
+      <View style={styles.callControls}>
+        <TouchableOpacity 
+          style={[
+            styles.controlButton, 
+            micActive ? styles.activeControl : styles.inactiveControl
+          ]} 
+          onPress={toggleMic}
+        >
+          {micActive ? <Mic color="white" size={24} /> : <MicOff color="white" size={24} />}
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={leaveRoom} style={[styles.controlBtn, styles.leaveBtn]}>
-          <Text style={styles.buttonText}>Leave Room</Text>
+        <TouchableOpacity 
+          style={[
+            styles.controlButton, 
+            cameraActive ? styles.activeControl : styles.inactiveControl
+          ]} 
+          onPress={toggleCamera}
+        >
+          {cameraActive ? <Camera color="white" size={24} /> : <CameraOff color="white" size={24} />}
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={toggleCamera} style={[styles.controlBtn, cameraActive ? {} : styles.inactiveBtn]}>
-          <Text style={styles.buttonText}>{cameraActive ? 'Stop Camera' : 'Start Camera'}</Text>
+        <TouchableOpacity 
+          style={styles.endCallButton} 
+          onPress={leaveRoom}
+        >
+          <Phone color="white" size={24} style={{transform: [{rotate: '135deg'}]}} />
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -430,126 +438,120 @@ export default function RoomScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#25292e',
-    padding: 10,
+    backgroundColor: '#36393f', // Discord dark theme background
   },
-  videoContainer: {
+  header: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    backgroundColor: '#2f3136', // Slightly lighter dark background
+  },
+  channelName: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  connectedStatus: {
+    color: '#43b581', // Discord online green
+    fontSize: 14,
+    marginTop: 5,
+  },
+  participantsGrid: {
+    flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    marginBottom: 10,
+    alignItems: 'center',
+    padding: 10,
   },
-  videoBox: {
-    position: 'relative',
-    width: width > 600 ? 300 : width * 0.45,
-    height: width > 600 ? 220 : width * 0.45 * 0.75,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    overflow: 'hidden',
+  participantCard: {
+    width: width * 0.45,
     margin: 5,
-    backgroundColor: '#333',
+    alignItems: 'center',
   },
-  video: {
+  participantVideoContainer: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#2f3136',
+  },
+  participantVideo: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#222',
   },
-  videoLabel: {
-    position: 'absolute',
-    bottom: 5,
-    left: 5,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingVertical: 3,
-    paddingHorizontal: 6,
-    borderRadius: 4,
-  },
-  videoLabelText: {
-    color: 'white',
-    fontSize: 12,
-  },
-  sectionHeader: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginVertical: 8,
-  },
-  chatSection: {
+  noVideoPlaceholder: {
     flex: 1,
-    marginTop: 10,
-  },
-  chatContainer: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#444',
-    borderRadius: 8,
-    backgroundColor: '#333',
-    marginBottom: 10,
-  },
-  chatScrollView: {
-    flex: 1,
-  },
-  chatContent: {
-    padding: 10,
-    flexGrow: 1,
-  },
-  chatMessageContainer: {
-    backgroundColor: '#444',
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  chatMessage: {
-    color: '#fff',
-    fontSize: 14,
-  },
-  noMessagesText: {
-    color: '#888',
-    textAlign: 'center',
-    marginTop: 20,
-    fontStyle: 'italic',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    marginBottom: 10,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 5,
-    padding: 10,
-    color: '#000',
-    marginRight: 5,
-  },
-  sendButton: {
-    backgroundColor: '#4285f4',
-    padding: 10,
-    borderRadius: 5,
     justifyContent: 'center',
     alignItems: 'center',
-    width: 70,
+    backgroundColor: '#40444b',
   },
-  controls: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 5,
-  },
-  controlBtn: {
-    padding: 10,
-    borderRadius: 5,
-    backgroundColor: '#4285f4',
-    alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 4,
-  },
-  inactiveBtn: {
-    backgroundColor: '#666',
-  },
-  leaveBtn: {
-    backgroundColor: '#ea4335',
-  },
-  buttonText: {
+  placeholderText: {
     color: 'white',
-    fontWeight: '500',
+    fontSize: 48,
+    fontWeight: 'bold',
+  },
+  participantName: {
+    color: 'white',
+    marginTop: 10,
+    fontSize: 14,
+  },
+  statusIcons: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    flexDirection: 'row',
+  },
+  muteIcon: {
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 10,
+    padding: 2,
+    marginRight: 5,
+  },
+  videoOffIcon: {
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 10,
+    padding: 2,
+  },
+  chatButton: {
+    position: 'absolute',
+    bottom: 100,
+    right: 20,
+    backgroundColor: '#7289da', // Discord blurple
+    borderRadius: 30,
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  callControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 20,
+    backgroundColor: '#2f3136',
+  },
+  controlButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 10,
+  },
+  activeControl: {
+    backgroundColor: '#7289da', // Discord blurple
+  },
+  inactiveControl: {
+    backgroundColor: '#ed4245', // Discord red
+  },
+  endCallButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#ed4245', // Discord red
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 10,
   },
 });
+
