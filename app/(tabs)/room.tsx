@@ -1,286 +1,397 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Text, View, StyleSheet, TouchableOpacity, TextInput, ScrollView, SafeAreaView, Dimensions } from 'react-native';
+import { Text, View, Button, StyleSheet, TouchableOpacity, TextInput, ScrollView, SafeAreaView, Dimensions } from 'react-native';
 import { io } from 'socket.io-client';
-import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals} from 'react-native-webrtc';
+import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals } from 'react-native-webrtc';
+import { useRouter } from 'expo-router';
 registerGlobals()
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.solcon.nl:3478' }
-   
   ],
   iceCandidatePoolSize: 10,
 };
-const { width } = Dimensions.get('window');
 
-export default function RoomScreen() {
-  const [isConnected, setIsConnected] = useState<boolean>(false);
+type Participant = {
+  id: string;
+  username: string;
+  stream: MediaStream | null;
+}
+
+type PeerConnection = {
+  peerId: string;
+  connection: RTCPeerConnection;
+}
+
+const Room = () => {
+  const [micActive, setMicActive] = useState(true);
+  const [cameraActive, setCameraActive] = useState(true);
   const [chat, setChat] = useState<string[]>([]);
-  const [transport, setTransport] = useState<string>("N/A");
-  const [roomName, setRoomName] = useState<string>("phone");
+  const [input, setInput] = useState("");
+  const [participants, setParticipants] = useState<Participant[]>([]);
+
+  const router = useRouter();
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const socketRef = useRef<any>(null);
-  const [micActive, setMicActive] = useState<boolean>(true);
-  const [cameraActive, setCameraActive] = useState<boolean>(true);
-  const [input, setInput] = useState<string>("");
-  const userStreamRef = useRef<MediaStream | null>(null);
-  const peerStreamRef = useRef<MediaStream | null>(null);
-  const rtcConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const hostRef = useRef<boolean>(false);
-  const chatScrollViewRef = useRef<ScrollView>(null);
+  const peerConnectionsRef = useRef<PeerConnection[]>([]);
+  const isRoomCreatorRef = useRef(false);
+
+  const roomName = "phone"
 
   useEffect(() => {
-    // Only initialize socket and join room if roomName exists
     if (!roomName) return;
 
-    // Connect directly to your Express server
-    socketRef.current = io('http://192.168.123.59:4000', {
+    // Connect to socket server
+    socketRef.current = io('http://145.93.105.237:4000', {
       transports: ['websocket'],
       forceNew: true
     });
 
     console.log('Connecting to socket server...');
 
-    // First we join a room
     socketRef.current.on('connect', () => {
       console.log('Connected to socket server with ID:', socketRef.current.id);
       socketRef.current.emit('join', roomName);
       socketRef.current.emit('messages', roomName);
     });
 
-    socketRef.current.on('joined', handleRoomJoined);
-    // If the room didn't exist, the server would emit the room was 'created'
+    // Socket event handlers
     socketRef.current.on('created', handleRoomCreated);
-    // Whenever the next person joins, the server emits 'ready'
-    socketRef.current.on('ready', initiateCall);
-    // Whenever the user receives a message
-    socketRef.current.on('message', (chats: string[]) => {
-      console.log("all chats", chats);
-      setChat(chats);
-    });
-
-    // Emitted when a peer leaves the room
-    socketRef.current.on('leave', onPeerLeave);
-
-    // If the room is full, we show an alert
+    socketRef.current.on('joined', handleRoomJoined);
+    socketRef.current.on('user-list', handleUserList);
+    socketRef.current.on('user-joined', handleUserJoined);
+    socketRef.current.on('user-left', handleUserLeft);
+    socketRef.current.on('ready', handlePeerReady);
+    socketRef.current.on('message', handleChatMessage);
     socketRef.current.on('full', () => {
-      // Handle room full case for React Native
-      // You might want to use navigation here instead
-      console.log('Room is full');
+      alert('Room is full');
+      router.push('/');
     });
 
-    // Event called when a remote user initiating the connection
+    // WebRTC signaling events
     socketRef.current.on('offer', handleReceivedOffer);
     socketRef.current.on('answer', handleAnswer);
-    socketRef.current.on('ice-candidate', handlerNewIceCandidateMsg);
+    socketRef.current.on('ice-candidate', handleIceCandidate);
 
-    // clear up after
     return () => {
-      if (socketRef.current) {
-        console.log('Disconnecting socket...');
-        socketRef.current.disconnect();
-      }
-
-      // Make sure to clean up media streams
-      if (userStreamRef.current) {
-        userStreamRef.current.getTracks().forEach(track => track.stop());
-      }
+      // Cleanup function
+      leaveRoom();
     };
   }, [roomName]);
 
-  // useEffect(() => {
-  //   if (peerStreamRef.current) {
-  //     console.log('Peer stream changed, forcing re-render');
-  //     setIsConnected(prev => !prev);
-  //   }
-  // }, [peerStreamRef.current]);
-  
-
-  const handleRoomJoined = () => {
-    console.log('Room joined, requesting media access...');
-    requestMediaAccess();
-  };
+  // Setup local video when component mounts
+  useEffect(() => {
+    if (localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+  }, [localStreamRef.current]);
 
   const handleRoomCreated = () => {
-    console.log('Room created, setting as host and requesting media...');
-    hostRef.current = true;
+    console.log('Room created, setting as host...');
+    isRoomCreatorRef.current = true;
     requestMediaAccess();
   };
 
-  const requestMediaAccess = async () => {
-    try {
-      // For React Native WebRTC, we use mediaDevices.getUserMedia
-      const stream = await mediaDevices.getUserMedia({
+  const handleRoomJoined = () => {
+    console.log('Room joined, requesting media...');
+    requestMediaAccess();
+  };
+
+  const handleUserList = (users) => {
+    console.log('Received user list:', users);
+    // Store the current user list to initiate connections later
+    users.forEach(user => {
+      setParticipants(prev => {
+        if (prev.find(p => p.id === user.id)) return prev;
+        return [...prev, {
+          id: user.id,
+          username: user.username || `User ${user.id.substring(0, 5)}`,
+          stream: null
+        }];
+      });
+    });
+  };
+
+  const handleUserJoined = (user) => {
+    console.log(`User joined: ${user.username || user.id}`);
+
+    // Add new participant to state (without stream yet)
+    setParticipants(prev => {
+      if (prev.find(p => p.id === user.id)) return prev;
+      return [...prev, {
+        id: user.id,
+        username: user.username || `User ${user.id.substring(0, 5)}`,
+        stream: null
+      }];
+    });
+  };
+
+  const handlePeerReady = (peerId) => {
+    console.log(`Peer is ready: ${peerId}`);
+    // Initiate connection to this peer
+    createPeerConnection(peerId);
+  };
+
+  const handleUserLeft = (userId) => {
+    console.log(`User left: ${userId}`);
+
+    // Clean up peer connection
+    const connectionIndex = peerConnectionsRef.current.findIndex(pc => pc.peerId === userId);
+    if (connectionIndex !== -1) {
+      const connection = peerConnectionsRef.current[connectionIndex].connection;
+      connection.ontrack = null;
+      connection.onicecandidate = null;
+      connection.close();
+
+      peerConnectionsRef.current.splice(connectionIndex, 1);
+    }
+
+    // Remove from participants list
+    setParticipants(prev => prev.filter(p => p.id !== userId));
+  };
+
+  const handleChatMessage = (messages) => {
+    console.log("Received chat messages:", messages);
+    setChat(messages);
+  };
+
+  const requestMediaAccess = () => {
+    navigator.mediaDevices
+      .getUserMedia({
         audio: true,
-        video: {
-          width: 500,
-          height: 500,
-        },
+        video: true
+      })
+      .then((stream) => {
+        console.log('Media access granted');
+        localStreamRef.current = stream;
+
+        // Add local user to participants
+        const localParticipant: Participant = {
+          id: socketRef.current.id,
+          username: `You`,
+          stream: stream
+        };
+
+        setParticipants(prev => {
+          if (prev.find(p => p.id === socketRef.current.id)) return prev;
+          return [...prev, localParticipant];
+        });
+
+        // Update local video
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+
+        // Signal that we're ready to connect
+        socketRef.current.emit('ready', roomName);
+      })
+      .catch((err) => {
+        console.error('Error accessing media devices:', err);
+        alert('Could not access camera or microphone. Please check permissions.');
+      });
+  };
+
+  const createPeerConnection = (peerId) => {
+    console.log(`Creating peer connection with ${peerId}`);
+
+    // Check if we already have a connection to this peer
+    const existingConnection = peerConnectionsRef.current.find(pc => pc.peerId === peerId);
+    if (existingConnection) {
+      console.log(`Connection to ${peerId} already exists`);
+      return existingConnection.connection;
+    }
+
+    const peerConnection = new RTCPeerConnection(ICE_SERVERS);
+
+    // Add this connection to our ref array
+    peerConnectionsRef.current.push({
+      peerId,
+      connection: peerConnection
+    });
+
+    // Add our local stream tracks to the connection
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStreamRef.current);
+      });
+    }
+
+    // Set up ICE candidate handling
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log(`Sending ICE candidate to ${peerId}`);
+        socketRef.current.emit('ice-candidate', {
+          targetId: peerId,
+          candidate: event.candidate
+        }, roomName);
+      }
+    };
+
+    // Handle incoming tracks
+    peerConnection.ontrack = (event) => {
+      console.log(`Received tracks from ${peerId}`);
+
+      setParticipants(prev => {
+        const updatedParticipants = [...prev];
+        const participantIndex = updatedParticipants.findIndex(p => p.id === peerId);
+
+        if (participantIndex !== -1) {
+          updatedParticipants[participantIndex] = {
+            ...updatedParticipants[participantIndex],
+            stream: event.streams[0]
+          };
+        }
+
+        return updatedParticipants;
+      });
+    };
+
+    // Create and send offer if we're initiating the connection
+    peerConnection
+      .createOffer()
+      .then(offer => {
+        return peerConnection.setLocalDescription(offer);
+      })
+      .then(() => {
+        console.log(`Sending offer to ${peerId}`);
+        socketRef.current.emit('offer', {
+          targetId: peerId,
+          offer: peerConnection.localDescription
+        }, roomName);
+      })
+      .catch(err => {
+        console.error('Error creating offer:', err);
       });
 
-      console.log('Media access granted, setting up local video');
-      userStreamRef.current = stream;
+    return peerConnection;
+  };
 
-      // If we joined (not created) the room, emit ready event
-      if (!hostRef.current) {
-        socketRef.current.emit('ready', roomName);
+  const handleReceivedOffer = ({ offer, from }) => {
+    console.log(`Received offer from ${from}`);
+
+    // Create peer connection if it doesn't exist
+    const peerConnection = new RTCPeerConnection(ICE_SERVERS);
+
+    // Save the connection
+    peerConnectionsRef.current.push({
+      peerId: from,
+      connection: peerConnection
+    });
+
+    // Add local tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStreamRef.current);
+      });
+    }
+
+    // ICE candidate handling
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socketRef.current.emit('ice-candidate', {
+          targetId: from,
+          candidate: event.candidate
+        }, roomName);
       }
-    } catch (err) {
-      console.error('Error accessing media devices:', err);
-      // Use React Native Alert instead of browser alert
-      console.log('Could not access camera or microphone. Please check permissions.');
+    };
+
+    // Track handling
+    peerConnection.ontrack = (event) => {
+      console.log(`Received tracks from ${from}`);
+
+      setParticipants(prev => {
+        const updatedParticipants = [...prev];
+        const participantIndex = updatedParticipants.findIndex(p => p.id === from);
+
+        if (participantIndex !== -1) {
+          updatedParticipants[participantIndex] = {
+            ...updatedParticipants[participantIndex],
+            stream: event.streams[0]
+          };
+        } else {
+          // If participant isn't in the list yet, add them
+          updatedParticipants.push({
+            id: from,
+            username: `User ${from.substring(0, 5)}`,
+            stream: event.streams[0]
+          });
+        }
+
+        return updatedParticipants;
+      });
+    };
+
+    // Set remote description (the offer)
+    peerConnection
+      .setRemoteDescription(new RTCSessionDescription(offer))
+      .then(() => {
+        // Create answer
+        return peerConnection.createAnswer();
+      })
+      .then(answer => {
+        // Set local description (the answer)
+        return peerConnection.setLocalDescription(answer);
+      })
+      .then(() => {
+        // Send answer to peer
+        socketRef.current.emit('answer', {
+          targetId: from,
+          answer: peerConnection.localDescription
+        }, roomName);
+      })
+      .catch(err => {
+        console.error('Error handling offer:', err);
+      });
+  };
+
+  const handleAnswer = ({ answer, from }) => {
+    console.log(`Received answer from ${from}`);
+
+    // Find the appropriate peer connection
+    const peerConnection = peerConnectionsRef.current.find(pc => pc.peerId === from)?.connection;
+
+    if (peerConnection) {
+      peerConnection
+        .setRemoteDescription(new RTCSessionDescription(answer))
+        .catch(err => {
+          console.error('Error setting remote description:', err);
+        });
+    } else {
+      console.error(`No peer connection found for ${from}`);
     }
   };
 
-  const sendChat = () => {
-    console.log("msg send", input);
+  const handleIceCandidate = ({ candidate, from }) => {
+    console.log(`Received ICE candidate from ${from}`);
+
+    // Find the appropriate peer connection
+    const peerConnection = peerConnectionsRef.current.find(pc => pc.peerId === from)?.connection;
+
+    if (peerConnection) {
+      peerConnection
+        .addIceCandidate(new RTCIceCandidate(candidate))
+        .catch(err => {
+          console.error('Error adding ICE candidate:', err);
+        });
+    } else {
+      console.error(`No peer connection found for ${from}`);
+    }
+  };
+
+  const sendChat = (event) => {
+    event.preventDefault();
+    console.log("Sending message:", input);
     socketRef.current.emit('message', input, roomName);
     setInput("");
   };
 
-  const handleInputChange = (text: string) => {
-    setInput(text);
+  const handleInputChange = (e) => {
+    setInput(e.target.value);
   };
 
-  const initiateCall = () => {
-    console.log('Ready to initiate call, host status:', hostRef.current);
-    if (hostRef.current) {
-      rtcConnectionRef.current = createPeerConnection();
-
-      // Only add tracks if we have a stream
-      if (userStreamRef.current) {
-        userStreamRef.current.getTracks().forEach(track => {
-          rtcConnectionRef.current?.addTrack(track, userStreamRef.current!);
-        });
-        rtcConnectionRef.current
-          .createOffer()
-          .then((offer) => {
-            rtcConnectionRef.current?.setLocalDescription(offer);
-            socketRef.current.emit('offer', offer, roomName);
-          })
-          .catch((error) => {
-            console.error('Error creating offer:', error);
-          });
-      } else {
-        console.error('No local stream available when initiating call');
-      }
-    }
-  };
-
-  const onPeerLeave = () => {
-    console.log('Peer left the room');
-    // This person is now the creator because they are the only person in the room.
-    hostRef.current = true;
-
-    if (peerStreamRef.current) {
-      peerStreamRef.current.getTracks().forEach((track) => track.stop());
-      peerStreamRef.current = null;
-    }
-
-    // Safely closes the existing connection established with the peer who left.
-    if (rtcConnectionRef.current) {
-      rtcConnectionRef.current.ontrack = null;
-      rtcConnectionRef.current.onicecandidate = null;
-      rtcConnectionRef.current.close();
-      rtcConnectionRef.current = null;
-    }
-  };
-
-  const createPeerConnection = () => {
-    console.log('Creating peer connection');
-    const connection = new RTCPeerConnection(ICE_SERVERS);
-
-    connection.onicecandidate = handleICECandidateEvent;
-    connection.ontrack = handleTrackEvent;
-
-    // Add these connection state monitors
-    connection.oniceconnectionstatechange = () => {
-      console.log('ICE Connection State:', connection.iceConnectionState);
-    };
-
-    connection.onconnectionstatechange = () => {
-      console.log('Connection State:', connection.connectionState);
-    };
-
-    return connection;
-  };
-
-  const handleReceivedOffer = (offer: RTCSessionDescriptionInit) => {
-    console.log('Received offer, creating answer');
-    if (!hostRef.current && userStreamRef.current) {
-      rtcConnectionRef.current = createPeerConnection();
-
-      userStreamRef.current.getTracks().forEach(track => {
-        rtcConnectionRef.current?.addTrack(track, userStreamRef.current!);
-      });
-
-      rtcConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-
-      rtcConnectionRef.current
-        .createAnswer()
-        .then((answer) => {
-          rtcConnectionRef.current?.setLocalDescription(answer);
-          socketRef.current.emit('answer', answer, roomName);
-        })
-        .catch((error) => {
-          console.error('Error creating answer:', error);
-        });
-    }
-  };
-
-  const handleAnswer = (answer: RTCSessionDescriptionInit) => {
-    console.log('Received answer from peer');
-    rtcConnectionRef.current
-      ?.setRemoteDescription(new RTCSessionDescription(answer))
-      .catch((err) => console.error('Error setting remote description:', err));
-  };
-
-  const handleICECandidateEvent = (event: RTCPeerConnectionIceEvent) => {
-    if (event.candidate) {
-      console.log('Generated ICE candidate');
-      socketRef.current.emit('ice-candidate', event.candidate, roomName);
-    }
-  };
-
-  const handlerNewIceCandidateMsg = (incoming: RTCIceCandidateInit) => {
-    console.log('Received ICE candidate');
-    // We cast the incoming candidate to RTCIceCandidate
-    const candidate = new RTCIceCandidate(incoming);
-    rtcConnectionRef.current
-      ?.addIceCandidate(candidate)
-      .catch((e) => console.error('Error adding ICE candidate:', e));
-  };
-
-  const handleTrackEvent = (event: RTCTrackEvent) => {
-    console.log('Received tracks from peer', event.streams);
-    console.log('Track details:', {
-      kind: event.track.kind,
-      enabled: event.track.enabled,
-      readyState: event.track.readyState,
-      id: event.track.id
-    });
-    
-    if (event.streams && event.streams[0]) {
-      console.log('Setting peer stream with track type:', event.track.kind);
-      
-      // Force a short delay before setting the stream (helps with rendering issues)
-      setTimeout(() => {
-        peerStreamRef.current = event.streams[0];
-        // Force re-render
-        setIsConnected(prev => !prev);
-      }, 500);
-    } else {
-      console.error('Received track event with no streams');
-    }
-  };
-  const toggleMediaStream = (type: any, state: any) => {
-    if (userStreamRef.current) {
-      userStreamRef.current.getTracks().forEach((track) => {
-        if (track.kind === type) {
-          track.enabled = !state;
-        }
-      });
-    }
-    if (peerStreamRef.current) {
-      peerStreamRef.current.getTracks().forEach((track) => {
+  const toggleMediaStream = (type, state) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
         if (track.kind === type) {
           track.enabled = !state;
         }
@@ -300,256 +411,192 @@ export default function RoomScreen() {
 
   const leaveRoom = () => {
     if (socketRef.current) {
-      socketRef.current.emit('leave', roomName); // Let's the server know that user has left the room.
+      socketRef.current.emit('leave', roomName);
+      socketRef.current.disconnect();
     }
 
-    if (userStreamRef.current) {
-      userStreamRef.current.getTracks().forEach((track) => track.stop());
-      userStreamRef.current = null;
+    // Stop all local media tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
 
-    if (peerStreamRef.current) {
-      peerStreamRef.current.getTracks().forEach((track) => track.stop());
-      peerStreamRef.current = null;
-    }
+    // Close all peer connections
+    peerConnectionsRef.current.forEach(({ connection }) => {
+      connection.ontrack = null;
+      connection.onicecandidate = null;
+      connection.close();
+    });
 
-    // Safely closes the existing connection
-    if (rtcConnectionRef.current) {
-      rtcConnectionRef.current.ontrack = null;
-      rtcConnectionRef.current.onicecandidate = null;
-      rtcConnectionRef.current.close();
-      rtcConnectionRef.current = null;
-    }
+    peerConnectionsRef.current = [];
+
+    // Navigate back to home
+    // router.push('/');
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Video Container */}
-      <View style={styles.videoContainer}>
-        <View style={styles.videoBox}>
-          {userStreamRef.current && (
-            <RTCView
-              streamURL={userStreamRef.current.toURL()}
-              style={styles.video}
-              objectFit="cover"
-              mirror={true}
-            />
-          )}
-          <View style={styles.videoLabel}>
-            <Text style={styles.videoLabelText}>You</Text>
-          </View>
-        </View>
-        <View style={styles.videoBox}>
-          {peerStreamRef.current ? (
-            <>
+    <SafeAreaView style={styles.videoRoom}>
+      <View style={styles.videoGrid}>
+        {participants.map(participant => (
+          <View key={participant.id} style={styles.videoBox}>
+            {participant.stream ? (
               <RTCView
-                streamURL={peerStreamRef.current.toURL()}
+                streamURL={participant.stream.toURL()}
                 style={styles.video}
-                objectFit="cover"
-                zOrder={1} // Try different zOrder values (0 or 1)
+                objectFit='cover'
+                zOrder={participant.id === socketRef.current?.id ? 1 : 0}
               />
-              <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', padding: 3 }}>
-                <Text style={{ color: 'white', fontSize: 10 }}>
-                  Tracks: {peerStreamRef.current.getTracks().length} |
-                  A: {peerStreamRef.current.getAudioTracks().length} |
-                  V: {peerStreamRef.current.getVideoTracks().length}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
-              <Text style={{ color: 'white' }}>Waiting for peer video...</Text>
-            </View>
-          )}
-          <View style={styles.videoLabel}>
-            <Text style={styles.videoLabelText}>Peer</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Chat Section */}
-      <View style={styles.chatSection}>
-        <Text style={styles.sectionHeader}>Chat</Text>
-
-        {/* Chat Messages */}
-        <View style={styles.chatContainer}>
-          <ScrollView
-            ref={chatScrollViewRef}
-            style={styles.chatScrollView}
-            contentContainerStyle={styles.chatContent}
-          >
-            {chat.length === 0 ? (
-              <Text style={styles.noMessagesText}>No messages yet</Text>
             ) : (
-              chat.map((msg, index) => (
-                <View key={index} style={styles.chatMessageContainer}>
-                  <Text style={styles.chatMessage}>{msg}</Text>
-                </View>
-              ))
+              <View style={[styles.video, { backgroundColor: '#222' }]} />
             )}
-          </ScrollView>
-        </View>
-
-        {/* Chat Input */}
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={handleInputChange}
-            placeholder="Type your message"
-            placeholderTextColor="#999"
-          />
-          <TouchableOpacity
-            style={styles.sendButton}
-            onPress={sendChat}
-            disabled={!input.trim()}
-          >
-            <Text style={styles.buttonText}>Send</Text>
-          </TouchableOpacity>
-        </View>
+            <View style={styles.videoLabel}>
+              <Text style={{ color: 'white' }}>
+                {participant.id === socketRef.current?.id ? 'You' : participant.username}
+              </Text>
+            </View>
+          </View>
+        ))}
       </View>
 
-      {/* Controls */}
+      {/* <View className="chat-container">
+        <Text>Chat</Text>
+        <View className="chat-messages">
+          {chat.map((msg, index) => (
+            <Text key={index}>{msg}</Text>
+          ))}
+        </View>
+        <form className="chat-input" onSubmit={sendChat}>
+          <input 
+            value={input}
+            onChange={handleInputChange}
+            placeholder="Type a message..." 
+          />
+          <button type="submit">Send</button>
+        </form>
+      </View> */}
+
       <View style={styles.controls}>
-        <TouchableOpacity onPress={toggleMic} style={[styles.controlBtn, micActive ? {} : styles.inactiveBtn]}>
-          <Text style={styles.buttonText}>{micActive ? 'Mute Mic' : 'Unmute Mic'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={leaveRoom} style={[styles.controlBtn, styles.leaveBtn]}>
-          <Text style={styles.buttonText}>Leave Room</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={toggleCamera} style={[styles.controlBtn, cameraActive ? {} : styles.inactiveBtn]}>
-          <Text style={styles.buttonText}>{cameraActive ? 'Stop Camera' : 'Start Camera'}</Text>
-        </TouchableOpacity>
+        <Button
+          onPress={toggleMic}
+          title={micActive ? 'Mute Mic' : 'UnMute Mic'}
+          color="#4285f4"
+        />
+        <Button
+          onPress={toggleCamera}
+          title={cameraActive ? 'Stop Camera' : 'Start Camera'}
+          color="#4285f4"
+        />
+        <Button
+          onPress={leaveRoom}
+          title="Leave Room"
+          color="#ea4335"
+        />
       </View>
     </SafeAreaView>
   );
-}
+};
 
 const styles = StyleSheet.create({
-  container: {
+  videoRoom: {
     flex: 1,
-    backgroundColor: '#25292e',
-    padding: 10,
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: 20,
+    height: '100%',
   },
-  videoContainer: {
+  videoGrid: {
+    width: '100%',
+    // height: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
-    marginBottom: 10,
+    justifyContent: 'space-between',
+    marginBottom: 20,
   },
   videoBox: {
     position: 'relative',
-    width: width > 600 ? 300 : width * 0.45,
-    height: width > 600 ? 220 : width * 0.45 * 0.75,
+    width: '48%', // Approximation for grid-like layout
+    height: '100%',
+    aspectRatio: 4 / 3,
     borderWidth: 1,
     borderColor: '#ccc',
     borderRadius: 8,
     overflow: 'hidden',
-    margin: 5,
-    backgroundColor: '#333',
+    marginBottom: 10,
   },
   video: {
     width: '100%',
     height: '100%',
     backgroundColor: '#222',
+    objectFit: 'fill'
   },
   videoLabel: {
     position: 'absolute',
-    bottom: 5,
-    left: 5,
+    bottom: 10,
+    left: 10,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingVertical: 3,
-    paddingHorizontal: 6,
+    color: 'white',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
     borderRadius: 4,
   },
-  videoLabelText: {
-    color: 'white',
-    fontSize: 12,
-  },
-  sectionHeader: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginVertical: 8,
-  },
-  chatSection: {
-    flex: 1,
-    marginTop: 10,
-  },
   chatContainer: {
-    flex: 1,
+    width: '100%',
+    maxWidth: 600,
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: '#ccc',
     borderRadius: 8,
-    backgroundColor: '#333',
-    marginBottom: 10,
-  },
-  chatScrollView: {
-    flex: 1,
-  },
-  chatContent: {
     padding: 10,
-    flexGrow: 1,
+    marginBottom: 20,
   },
-  chatMessageContainer: {
-    backgroundColor: '#444',
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 8,
+  chatMessages: {
+    height: 200,
+    marginBottom: 10,
+    padding: 10,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 4,
+    color: 'black',
   },
-  chatMessage: {
-    color: '#fff',
-    fontSize: 14,
-  },
-  noMessagesText: {
-    color: '#888',
-    textAlign: 'center',
-    marginTop: 20,
-    fontStyle: 'italic',
-  },
-  inputContainer: {
+  chatInput: {
     flexDirection: 'row',
-    marginBottom: 10,
+    gap: 10,
   },
-  input: {
+  chatInputField: {
     flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 5,
-    padding: 10,
-    color: '#000',
-    marginRight: 5,
-  },
-  sendButton: {
-    backgroundColor: '#4285f4',
-    padding: 10,
-    borderRadius: 5,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 70,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
   },
   controls: {
+    position: 'absolute',
+    bottom: 15,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 5,
+    gap: 15,
   },
   controlBtn: {
-    padding: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     borderRadius: 5,
     backgroundColor: '#4285f4',
-    alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 4,
-  },
-  inactiveBtn: {
-    backgroundColor: '#666',
+    color: 'white',
   },
   leaveBtn: {
     backgroundColor: '#ea4335',
   },
-  buttonText: {
-    color: 'white',
-    fontWeight: '500',
-  },
 });
+
+// Helper component to display video
+const VideoPlayer = ({ stream, style }: { stream: MediaStream | null, style: any }) => {
+  if (!stream) return <View style={[style, { backgroundColor: '#222' }]} />;
+
+  return (
+    <RTCView
+      streamURL={stream.toURL()}
+      style={style}
+      objectFit='cover'
+      zOrder={0}
+    />
+  );
+};
+
+export default Room;
