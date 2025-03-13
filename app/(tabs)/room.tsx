@@ -3,6 +3,8 @@ import { Text, View, Button, StyleSheet, TouchableOpacity, TextInput, ScrollView
 import { io } from 'socket.io-client';
 import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals } from 'react-native-webrtc';
 import { useRouter } from 'expo-router';
+import ChatModal from '../components/ChatModal'
+import * as Haptics from 'expo-haptics'
 registerGlobals()
 const ICE_SERVERS = {
   iceServers: [
@@ -24,7 +26,7 @@ type PeerConnection = {
 
 const Room = () => {
   const [micActive, setMicActive] = useState(true);
-  const [cameraActive, setCameraActive] = useState(true);
+  const [cameraActive, setCameraActive] = useState(false);
   const [chat, setChat] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -33,8 +35,11 @@ const Room = () => {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const socketRef = useRef<any>(null);
+  const socketChatRef = useRef<any>(null);
   const peerConnectionsRef = useRef<PeerConnection[]>([]);
   const isRoomCreatorRef = useRef(false);
+
+  const [isChatModalVisible, setIsChatModalVisible] = useState(false)
 
   const roomName = "phone"
 
@@ -46,14 +51,23 @@ const Room = () => {
       transports: ['websocket'],
       forceNew: true
     });
-
+    socketChatRef.current = io('http://145.93.105.237:4001',{
+      transports: ['websocket']
+    })
     console.log('Connecting to socket server...');
+    socketChatRef.current.on('connect',()=>{
+      console.log("connected to chat service")
+      socketChatRef.current.emit('join', roomName)
+      socketChatRef.current.emit('messages', roomName)
+    })
+    socketChatRef.current.on('message', handleChatMessage)
 
     socketRef.current.on('connect', () => {
       console.log('Connected to socket server with ID:', socketRef.current.id);
       socketRef.current.emit('join', roomName);
-      socketRef.current.emit('messages', roomName);
+      // socketRef.current.emit('messages', roomName);
     });
+    
 
     // Socket event handlers
     socketRef.current.on('created', handleRoomCreated);
@@ -151,7 +165,7 @@ const Room = () => {
   };
 
   const handleChatMessage = (messages) => {
-    console.log("Received chat messages:", messages);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)
     setChat(messages);
   };
 
@@ -164,7 +178,11 @@ const Room = () => {
       .then((stream) => {
         console.log('Media access granted');
         localStreamRef.current = stream;
-
+        localStreamRef.current?.getTracks().forEach((track) => {
+          if (track.kind === 'video') {
+            track.enabled = cameraActive;
+          }
+        });
         // Add local user to participants
         const localParticipant: Participant = {
           id: socketRef.current.id,
@@ -180,6 +198,7 @@ const Room = () => {
         // Update local video
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+          
         }
 
         // Signal that we're ready to connect
@@ -378,16 +397,6 @@ const Room = () => {
     }
   };
 
-  const sendChat = (event) => {
-    event.preventDefault();
-    console.log("Sending message:", input);
-    socketRef.current.emit('message', input, roomName);
-    setInput("");
-  };
-
-  const handleInputChange = (e) => {
-    setInput(e.target.value);
-  };
 
   const toggleMediaStream = (type, state) => {
     if (localStreamRef.current) {
@@ -431,9 +440,18 @@ const Room = () => {
     peerConnectionsRef.current = [];
 
     // Navigate back to home
-    // router.push('/');
+    router.push('/');
   };
+  const toggleChat = ()=>{
+    setIsChatModalVisible(true)
+  }
 
+  const onModalClose = () =>{
+    setIsChatModalVisible(false)
+  }
+  const sendMessage = (message) =>{
+    socketChatRef.current.emit("message", message, roomName)
+  }
   return (
     <SafeAreaView style={styles.videoRoom}>
       <View style={styles.videoGrid}>
@@ -458,23 +476,6 @@ const Room = () => {
         ))}
       </View>
 
-      {/* <View className="chat-container">
-        <Text>Chat</Text>
-        <View className="chat-messages">
-          {chat.map((msg, index) => (
-            <Text key={index}>{msg}</Text>
-          ))}
-        </View>
-        <form className="chat-input" onSubmit={sendChat}>
-          <input 
-            value={input}
-            onChange={handleInputChange}
-            placeholder="Type a message..." 
-          />
-          <button type="submit">Send</button>
-        </form>
-      </View> */}
-
       <View style={styles.controls}>
         <Button
           onPress={toggleMic}
@@ -491,7 +492,19 @@ const Room = () => {
           title="Leave Room"
           color="#ea4335"
         />
+        <Button
+          onPress={toggleChat}
+          title='open chat'
+          color="#4285f4"
+          />
       </View>
+      <ChatModal onClose={onModalClose} isVisible={isChatModalVisible} onSendMessage={sendMessage}> 
+        <ScrollView className="chat-messages">
+          {chat.map((msg, index) => (
+            <Text key={index}>{msg.text}</Text>
+          ))}
+        </ScrollView>
+      </ChatModal>
     </SafeAreaView>
   );
 };
