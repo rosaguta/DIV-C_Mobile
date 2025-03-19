@@ -36,5 +36,8 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+ios
+output
+
 
 .idea
