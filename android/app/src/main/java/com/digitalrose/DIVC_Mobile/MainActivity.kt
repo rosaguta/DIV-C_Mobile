@@ -1,15 +1,16 @@
 package com.digitalrose.DIVC_Mobile
+import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
 import android.os.Bundle
+
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+
 import expo.modules.ReactActivityDelegateWrapper
-import expo.modules.splashscreen.SplashScreenManager
-import com.oney.WebRTCModule.WebRTCModuleOptions;
-import android.media.AudioAttributes
+
 class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
@@ -18,8 +19,6 @@ class MainActivity : ReactActivity() {
     // setTheme(R.style.AppTheme);
     // @generated begin expo-splashscreen - expo prebuild (DO NOT MODIFY) sync-f3ff59a738c56c9a6119210cb55f0b613eb8b6af
     SplashScreenManager.registerOnActivity(this)
-      val options: WebRTCModuleOptions = WebRTCModuleOptions.getInstance()
-      options.enableMediaProjectionService = true
     // @generated end expo-splashscreen
     super.onCreate(null)
   }
