@@ -47,11 +47,11 @@ const Room = () => {
     if (!roomName) return;
 
     // Connect to socket server
-    socketRef.current = io('http://145.93.105.237:4000', {
+    socketRef.current = io(process.env.EXPO_PUBLIC_WEBSOCKET_SERVER_URL, {
       transports: ['websocket'],
       forceNew: true
     });
-    socketChatRef.current = io('http://145.93.105.237:4001',{
+    socketChatRef.current = io(process.env.EXPO_PUBLIC_WEBSOCKET_CHAT_URL,{
       transports: ['websocket']
     })
     console.log('Connecting to socket server...');
