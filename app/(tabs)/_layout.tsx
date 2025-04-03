@@ -9,19 +9,19 @@ export default function TabLayout() {
     screenOptions={{
         tabBarActiveTintColor: '#ffd33d',
         headerStyle: {
-          backgroundColor: '#25292e',
+          // backgroundColor: '#25292e',
         },
         headerShadowVisible: false,
-        headerTintColor: '#fff',
+        // headerTintColor: '#fff',
         tabBarStyle: {
-        backgroundColor: '#25292e',
+        // backgroundColor: '#25292e',
         },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
+          title: 'DIV-Communications',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'home-sharp' : 'home-outline'} color={color} size={24} />
           ),
