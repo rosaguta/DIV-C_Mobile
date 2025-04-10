@@ -6,7 +6,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 export default function TabLayout() {
   return (
     <Tabs
-    screenOptions={{
+      screenOptions={{
         tabBarActiveTintColor: '#000000',
         headerStyle: {
           // backgroundColor: '#25292e',
@@ -14,7 +14,7 @@ export default function TabLayout() {
         headerShadowVisible: false,
         // headerTintColor: '#fff',
         tabBarStyle: {
-        // backgroundColor: '#25292e',
+          // backgroundColor: '#25292e',
         },
       }}
     >
@@ -32,10 +32,20 @@ export default function TabLayout() {
         options={{
           title: 'Room',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'chatbox' : 'chatbox-outline'} color={color} size={24}/>
+            <Ionicons name={focused ? 'chatbox' : 'chatbox-outline'} color={color} size={24} />
           ),
         }}
       />
+      <Tabs.Screen
+        name='createRoom'
+        options={{
+          title: "Create a room",
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'add-outline' : 'add-circle-outline'} color={color} size={24} />
+          ),
+        }}
+      />
+        
     </Tabs>
   );
 }
