@@ -1,6 +1,8 @@
 import { Text, View, StyleSheet, Image, TextInput, Button } from 'react-native';
+import { useRouter } from 'expo-router';
 
 export default function Index() {
+  const router = useRouter();
   return (
     <View style={styles.container}>
       <View style={styles.contentWrapper}>
@@ -20,7 +22,7 @@ export default function Index() {
           </View>
           <View style={styles.flexItem}>
             <Text style={styles.labelText}>Or create the meeting yourself</Text>
-            <Button title='Create Meeting' color="#3B82F6" />
+            <Button onPress={() => router.push('/(tabs)/createRoom')} title='Create Meeting' color="#3B82F6" />
           </View>
         </View>
       </View>
