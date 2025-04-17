@@ -1,8 +1,67 @@
 import { Text, View, StyleSheet, Image, TextInput, Button } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useState } from 'react';
+
+
+type MeetingDetails = {
+  meetingId: string,
+  name: string,
+  inviteCode: string,
+  participants: Array<string> | null
+  chat: [] | null,
+
+}
 
 export default function Index() {
   const router = useRouter();
+  const currentUserMail = "rvleeuwen@digitalindividuals.com"
+  const [inviteTextField, setInviteTextField] = useState<String>('')
+
+  const joinMeeting = async () => {
+    const jsonBody = JSON.stringify({
+      email: currentUserMail,
+      inviteCode: inviteTextField
+    });
+  
+    const myHeaders = new Headers();
+    myHeaders.append("Content-Type", "application/json");
+  
+    try {
+      const response = await fetch('http://192.168.2.7:9090/api/meetings/join', {
+        method: "POST",
+        body: jsonBody,
+        headers: myHeaders
+      });
+  
+      if (!response.ok) {
+        if (response.status === 400) {
+          console.error("Forbidden: You are not allowed to join this meeting.");
+        } else {
+          console.error(`Error: Received status code ${response.status}`);
+        }
+        return;
+      }
+  
+      const joined: MeetingDetails = await response.json();
+  
+      if (joined) {
+        router.push({
+          pathname: "/(tabs)/meeting",
+          params: {
+            meetingId: joined.meetingId,
+            meetingName: joined.name
+          }
+        });
+      }
+  
+    } catch (exception) {
+      console.error("Network error or unexpected exception:", exception);
+    }
+  };
+
+
+
+
   return (
     <View style={styles.container}>
       <View style={styles.contentWrapper}>
@@ -18,11 +77,15 @@ export default function Index() {
               style={styles.textInput}
               placeholder='Enter invite ID'
               placeholderTextColor="#999"
+              onChangeText={setInviteTextField}
             />
+              <View style={styles.joinButton}>
+                <Button title='Join' onPress={() => joinMeeting()} />
+              </View>
           </View>
           <View style={styles.flexItem}>
             <Text style={styles.labelText}>Or create the meeting yourself</Text>
-            <Button onPress={() => router.push('/(tabs)/createRoom')} title='Create Meeting' color="#3B82F6" />
+            <Button onPress={() => router.push('/(tabs)/createMeeting')} title='Create Meeting' color="#3B82F6" />
           </View>
         </View>
       </View>
@@ -74,7 +137,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     width: '100%',
-    marginTop: 10,
+    marginVertical: 10,
     padding: 12,
     borderColor: '#ccc',
     borderWidth: 1,
@@ -88,4 +151,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: '#333',
   },
+  joinButton: {
+    width: 100,
+    // alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  }
 });
