@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Text, View, Button, StyleSheet, TouchableOpacity, TextInput, ScrollView, SafeAreaView, Dimensions } from 'react-native';
 import { io } from 'socket.io-client';
 import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, MediaStream, mediaDevices, RTCView, registerGlobals } from 'react-native-webrtc';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import ChatModal from '../components/ChatModal'
 import * as Haptics from 'expo-haptics'
 registerGlobals()
@@ -41,10 +41,10 @@ const Room = () => {
 
   const [isChatModalVisible, setIsChatModalVisible] = useState(false)
 
-  const roomName = "phone"
+  const {meetingName} = useLocalSearchParams()
 
   useEffect(() => {
-    if (!roomName) return;
+    if (!meetingName) return;
 
     // Connect to socket server
     socketRef.current = io(process.env.EXPO_PUBLIC_WEBSOCKET_SERVER_URL, {
@@ -57,15 +57,15 @@ const Room = () => {
     console.log('Connecting to socket server...');
     socketChatRef.current.on('connect',()=>{
       console.log("connected to chat service")
-      socketChatRef.current.emit('join', roomName)
-      socketChatRef.current.emit('messages', roomName)
+      socketChatRef.current.emit('join', meetingName)
+      socketChatRef.current.emit('messages', meetingName)
     })
     socketChatRef.current.on('message', handleChatMessage)
 
     socketRef.current.on('connect', () => {
       console.log('Connected to socket server with ID:', socketRef.current.id);
-      socketRef.current.emit('join', roomName);
-      // socketRef.current.emit('messages', roomName);
+      socketRef.current.emit('join', meetingName);
+      // socketRef.current.emit('messages', meetingName);
     });
     
 
@@ -91,7 +91,7 @@ const Room = () => {
       // Cleanup function
       leaveRoom();
     };
-  }, [roomName]);
+  }, [meetingName]);
 
   // Setup local video when component mounts
   useEffect(() => {
@@ -202,7 +202,7 @@ const Room = () => {
         }
 
         // Signal that we're ready to connect
-        socketRef.current.emit('ready', roomName);
+        socketRef.current.emit('ready', meetingName);
       })
       .catch((err) => {
         console.error('Error accessing media devices:', err);
@@ -242,7 +242,7 @@ const Room = () => {
         socketRef.current.emit('ice-candidate', {
           targetId: peerId,
           candidate: event.candidate
-        }, roomName);
+        }, meetingName);
       }
     };
 
@@ -276,7 +276,7 @@ const Room = () => {
         socketRef.current.emit('offer', {
           targetId: peerId,
           offer: peerConnection.localDescription
-        }, roomName);
+        }, meetingName);
       })
       .catch(err => {
         console.error('Error creating offer:', err);
@@ -310,7 +310,7 @@ const Room = () => {
         socketRef.current.emit('ice-candidate', {
           targetId: from,
           candidate: event.candidate
-        }, roomName);
+        }, meetingName);
       }
     };
 
@@ -356,7 +356,7 @@ const Room = () => {
         socketRef.current.emit('answer', {
           targetId: from,
           answer: peerConnection.localDescription
-        }, roomName);
+        }, meetingName);
       })
       .catch(err => {
         console.error('Error handling offer:', err);
@@ -420,7 +420,7 @@ const Room = () => {
 
   const leaveRoom = () => {
     if (socketRef.current) {
-      socketRef.current.emit('leave', roomName);
+      socketRef.current.emit('leave', meetingName);
       socketRef.current.disconnect();
     }
 
@@ -450,7 +450,7 @@ const Room = () => {
     setIsChatModalVisible(false)
   }
   const sendMessage = (message) =>{
-    socketChatRef.current.emit("message", message, roomName)
+    socketChatRef.current.emit("message", message, meetingName)
   }
   return (
     <SafeAreaView style={styles.videoRoom}>
