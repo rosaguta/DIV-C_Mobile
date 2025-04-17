@@ -75,7 +75,7 @@ export default function Index() {
             </Text>
             <TextInput
               style={styles.textInput}
-              placeholder='Enter invite ID'
+              placeholder='Enter invite Code'
               placeholderTextColor="#999"
               onChangeText={setInviteTextField}
             />
