@@ -15,7 +15,7 @@ export default function RootLayout() {
         }}
       />
       <Stack.Screen
-        name='createRoom'
+        name='createMeeting'
         options={{
           title: "Create a meeting",
         }}
