@@ -50,7 +50,7 @@ export default function CreateMeetingScreen() {
     myHeaders.append("Content-Type", "application/json");
 
     try {
-      const response = await fetch('http://145.93.105.237:9090/api/meetings', {
+      const response = await fetch('http://192.168.2.7:9090/api/meetings', {
         method: "POST",
         body: jsonBody,
         headers: myHeaders
